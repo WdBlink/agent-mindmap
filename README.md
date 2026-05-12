@@ -23,9 +23,9 @@ Required plugin files are:
 Open the plugin settings and review:
 
 - Memory root: vault-relative folder for project Markdown, cache, previews, and Canvas files.
-- Codex session roots: configured paths are additive; `~/.codex/sessions` and `~/.codex/archived_sessions` are always scanned.
-- Claude Code project roots: configured paths are additive; `~/.claude/projects` is always scanned.
-- Claude desktop app session roots: defaults to `~/Library/Application Support/Claude/claude-code-sessions` and is used read-only to recover or enrich Claude Code `cwd` and title metadata.
+- Codex session roots: configured paths are additive; with auto-discover enabled, `~/.codex/sessions` and `~/.codex/archived_sessions` are scanned as canonical roots.
+- Claude Code project roots: configured paths are additive; with auto-discover enabled, `~/.claude/projects` is scanned as the canonical project root.
+- Claude desktop app session roots: with auto-discover enabled, `~/Library/Application Support/Claude/claude-code-sessions` is scanned read-only to recover or enrich Claude Code `cwd` and title metadata.
 - Auto-discover default session roots: keeps canonical Codex, Claude Code, and Claude desktop locations enabled alongside manual roots.
 - Project mapping policy: MVP maps by transcript cwd/source path into a stable project id.
 - Manual merge only: keeps project Markdown writes behind `Confirm Apply`.
