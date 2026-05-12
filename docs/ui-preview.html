@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Mindmap UI Preview</title>
+  <style>
+    :root {
+      --background-primary: #1f2028;
+      --background-secondary: #292b36;
+      --background-modifier-border: #3c3f4d;
+      --background-modifier-hover: #343746;
+      --text-normal: #ececf1;
+      --text-muted: #a9adbb;
+      --interactive-accent: #7aa2f7;
+      --text-error: #f7768e;
+      --text-warning: #e0af68;
+      --font-monospace: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    body {
+      margin: 0;
+      font: 13px Inter, ui-sans-serif, system-ui, sans-serif;
+      background: var(--background-primary);
+      color: var(--text-normal);
+    }
+    .agent-mindmap-view {
+      display: grid;
+      grid-template-columns: 220px 420px 1fr;
+      height: 780px;
+    }
+    .agent-mindmap-navigator,
+    .agent-mindmap-inbox,
+    .agent-mindmap-inspector {
+      min-width: 0;
+      padding: 12px;
+      overflow: hidden;
+      border-right: 1px solid var(--background-modifier-border);
+    }
+    h2, h3 { margin: 0 0 8px; font-size: 14px; font-weight: 650; }
+    button, input {
+      color: var(--text-normal);
+      background: var(--background-secondary);
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 8px;
+      padding: 7px 9px;
+    }
+    input { width: 100%; box-sizing: border-box; margin: 8px 0; }
+    .agent-mindmap-filter,
+    .agent-mindmap-session-row,
+    .agent-mindmap-health,
+    .agent-mindmap-empty,
+    .agent-mindmap-error-state {
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 8px;
+      background: var(--background-secondary);
+    }
+    .agent-mindmap-filter {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      text-align: left;
+    }
+    .is-active { border-left: 2px solid var(--interactive-accent); }
+    .agent-mindmap-session-list { display: grid; gap: 8px; }
+    .agent-mindmap-session-row { display: grid; gap: 4px; padding: 10px; }
+    .agent-mindmap-session-row.is-selected { outline: 2px solid var(--interactive-accent); }
+    .agent-mindmap-row-meta, .agent-mindmap-actions, .agent-mindmap-tabs {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    small, code { color: var(--text-muted); font-family: var(--font-monospace); }
+    .agent-mindmap-health, .agent-mindmap-empty, .agent-mindmap-error-state {
+      display: grid; gap: 4px; margin: 8px 0; padding: 10px;
+    }
+    .agent-mindmap-warning { border-color: var(--text-warning); }
+    .agent-mindmap-error { border-color: var(--text-error); }
+  </style>
+</head>
+<body>
+  <main class="agent-mindmap-view">
+    <section class="agent-mindmap-navigator">
+      <h3>Sources</h3>
+      <button class="agent-mindmap-filter is-active"><span>All</span><small>42</small></button>
+      <button class="agent-mindmap-filter"><span>Codex</span><small>27</small></button>
+      <button class="agent-mindmap-filter"><span>Claude Code</span><small>15</small></button>
+      <h3>Status</h3>
+      <button class="agent-mindmap-filter is-active"><span>new</span><small>12</small></button>
+      <button class="agent-mindmap-filter"><span>reviewed</span><small>8</small></button>
+      <button class="agent-mindmap-filter"><span>merged</span><small>20</small></button>
+      <h3>Projects</h3>
+      <button class="agent-mindmap-filter"><span>Unmapped</span><small>6</small></button>
+      <h3>Health</h3>
+      <div class="agent-mindmap-health agent-mindmap-warning"><span>parse-failed</span><small>Open source transcript</small></div>
+      <div class="agent-mindmap-health agent-mindmap-error"><span>merge-conflict</span><small>Open target file</small></div>
+    </section>
+    <section class="agent-mindmap-inbox">
+      <div class="agent-mindmap-row-meta"><h2>Session Inbox</h2><button>Refresh</button></div>
+      <input type="search" value="canvas">
+      <div class="agent-mindmap-session-list">
+        <article class="agent-mindmap-session-row is-selected">
+          <div class="agent-mindmap-row-meta"><span>codex</span><span>project-demo</span><span>new</span></div>
+          <strong>Canvas generator and merge review</strong>
+          <small>/repo/demo · 3 rounds · 18 messages</small>
+        </article>
+        <article class="agent-mindmap-session-row">
+          <div class="agent-mindmap-row-meta"><span>claude-code</span><span>Unmapped</span><span>reviewed</span></div>
+          <strong>Adapter parse edge cases</strong>
+          <small>/repo/agent-mindmap · 5 rounds · 44 messages</small>
+        </article>
+      </div>
+    </section>
+    <section class="agent-mindmap-inspector">
+      <h2>Session / Project Inspector</h2>
+      <small>codex / project-demo / new</small>
+      <h3>Canvas generator and merge review</h3>
+      <p>Markdown and JSON remain the source of truth. Canvas is generated navigation with evidence traces.</p>
+      <code>/Users/echooo/.codex/sessions/2026/05/12/session.jsonl</code>
+      <div class="agent-mindmap-actions">
+        <button>Map to Project</button>
+        <button>Extract Memory</button>
+        <button>Apply Merge</button>
+        <button>Generate Canvas</button>
+      </div>
+      <div class="agent-mindmap-tabs">
+        <button>Summary</button><button>Transcript</button><button>Memory</button><button>Evidence</button><button>Activity</button>
+      </div>
+      <div class="agent-mindmap-error-state">
+        <strong>Recovery actions</strong>
+        <button>Open source transcript</button>
+        <button>Open target file</button>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

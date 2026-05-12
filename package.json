@@ -1,0 +1,30 @@
+{
+  "name": "agent-mindmap",
+  "version": "0.1.0",
+  "description": "Obsidian plugin MVP for extracting AI coding session memory into Markdown and project-scoped Canvas maps.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "node esbuild.config.mjs production",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "obsidian",
+    "codex",
+    "claude-code",
+    "project-memory",
+    "canvas"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "builtin-modules": "^4.0.0",
+    "esbuild": "^0.25.4",
+    "obsidian": "^1.8.7",
+    "tslib": "^2.8.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.3"
+  }
+}

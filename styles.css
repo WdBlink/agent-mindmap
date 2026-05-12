@@ -1,0 +1,165 @@
+.agent-mindmap-view {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(280px, 1.2fr) minmax(320px, 1.4fr);
+  height: 100%;
+  min-height: 0;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.agent-mindmap-navigator,
+.agent-mindmap-inbox,
+.agent-mindmap-inspector {
+  min-width: 0;
+  padding: 12px;
+  overflow: auto;
+  border-right: 1px solid var(--background-modifier-border);
+}
+
+.agent-mindmap-inspector {
+  border-right: 0;
+}
+
+.agent-mindmap-view h2,
+.agent-mindmap-view h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.agent-mindmap-panel-header,
+.agent-mindmap-row-meta,
+.agent-mindmap-actions,
+.agent-mindmap-tabs {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.agent-mindmap-panel-header {
+  justify-content: space-between;
+}
+
+.agent-mindmap-filter,
+.agent-mindmap-session-row,
+.agent-mindmap-health,
+.agent-mindmap-empty,
+.agent-mindmap-error-state {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.agent-mindmap-filter {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.agent-mindmap-filter.is-active {
+  border-left: 2px solid var(--interactive-accent);
+}
+
+.agent-mindmap-session-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.agent-mindmap-session-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.agent-mindmap-session-row.is-selected {
+  outline: 2px solid var(--interactive-accent);
+}
+
+.agent-mindmap-session-row small,
+.agent-mindmap-muted,
+.agent-mindmap-health small {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+}
+
+.agent-mindmap-view input[type="search"] {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.agent-mindmap-actions,
+.agent-mindmap-tabs {
+  margin: 12px 0;
+}
+
+.agent-mindmap-tabs .is-active {
+  border-color: var(--interactive-accent);
+}
+
+.agent-mindmap-tab-panel {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.agent-mindmap-tab-panel ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.agent-mindmap-empty,
+.agent-mindmap-error-state {
+  padding: 12px;
+}
+
+.agent-mindmap-health {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding: 8px;
+}
+
+.agent-mindmap-error {
+  border-color: var(--text-error);
+}
+
+.agent-mindmap-warning {
+  border-color: var(--text-warning);
+}
+
+.agent-mindmap-skeleton {
+  height: 64px;
+  margin-top: 8px;
+  border-radius: 8px;
+  background: var(--background-modifier-hover);
+}
+
+.agent-mindmap-view button:focus-visible,
+.agent-mindmap-session-row:focus-visible,
+.agent-mindmap-view input:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .agent-mindmap-view {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-mindmap-navigator,
+  .agent-mindmap-inbox,
+  .agent-mindmap-inspector {
+    border-right: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+}
