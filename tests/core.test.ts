@@ -504,6 +504,54 @@ describe("core MVP behavior", () => {
     expect(result.sessions.find((item) => item.id === "codex-archived")?.projectPath).toBe("/repo/archived");
   });
 
+  it("keeps forked Codex window identity when later session_meta repeats the parent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-codex-fork-"));
+    const codexRoot = join(root, "codex", "sessions");
+    await mkdir(codexRoot, { recursive: true });
+    await writeFile(
+      join(codexRoot, "rollout-2026-04-28T09-15-04-019dd1a7-715e-7412-bc0e-8db90d05eb60.jsonl"),
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "019dd1a7-715e-7412-bc0e-8db90d05eb60", cwd: "/Users/echooo/Documents/Code/my_repo/ztrade" } }),
+        JSON.stringify({ type: "event_msg", payload: { message: "user: parent ztrade session" } })
+      ].join("\n")
+    );
+    await writeFile(
+      join(codexRoot, "rollout-2026-05-10T13-10-51-019e104b-9c77-7bf3-ac2e-d009e908d019.jsonl"),
+      [
+        JSON.stringify({
+          type: "session_meta",
+          payload: {
+            id: "019e104b-9c77-7bf3-ac2e-d009e908d019",
+            forked_from_id: "019dd1a7-715e-7412-bc0e-8db90d05eb60",
+            cwd: "/Users/echooo/Documents/Code/my_repo/ztrade",
+            agent_nickname: "Linnaeus"
+          }
+        }),
+        JSON.stringify({ type: "session_meta", payload: { id: "019dd1a7-715e-7412-bc0e-8db90d05eb60", cwd: "/Users/echooo/Documents/Code/my_repo/ztrade" } }),
+        JSON.stringify({ type: "event_msg", payload: { message: "user: child ztrade session" } })
+      ].join("\n")
+    );
+
+    const service = new SessionService(
+      {
+        ...TEST_SETTINGS,
+        codexSessionRoots: [codexRoot],
+        claudeProjectRoots: [],
+        claudeAppSessionRoots: []
+      },
+      new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
+    );
+
+    const result = await service.scanAllWithDiagnostics();
+
+    expect(result.sessions.map((item) => item.id).sort()).toEqual([
+      "019dd1a7-715e-7412-bc0e-8db90d05eb60",
+      "019e104b-9c77-7bf3-ac2e-d009e908d019"
+    ]);
+    expect(result.sessions.find((item) => item.id === "019e104b-9c77-7bf3-ac2e-d009e908d019")?.title).toBe("Linnaeus");
+    expect(result.sessions.every((item) => item.projectPath === "/Users/echooo/Documents/Code/my_repo/ztrade")).toBe(true);
+  });
+
   it("uses Claude app metadata to enrich and recover Claude Code sessions", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-mindmap-claude-app-"));
     const claudeProjects = join(root, "claude", "projects");

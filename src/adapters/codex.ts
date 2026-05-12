@@ -86,11 +86,11 @@ export class CodexAdapter implements TranscriptAdapter {
       const type = stringValue(record.type);
       const payload = asRecord(record.payload);
       if (type === "session_meta" && payload) {
-        id = stringValue(payload.id) ?? id;
-        cwd = stringValue(payload.cwd) ?? stringValue(payload.project_path) ?? cwd;
-        title = stringValue(payload.title) ?? title;
-        summary = stringValue(payload.summary) ?? summary;
-        createdAt = timestampToMs(stringValue(payload.timestamp)) ?? createdAt;
+        id = id ?? stringValue(payload.id);
+        cwd = cwd ?? stringValue(payload.cwd) ?? stringValue(payload.project_path);
+        title = title ?? stringValue(payload.title) ?? stringValue(payload.agent_nickname);
+        summary = summary ?? stringValue(payload.summary);
+        createdAt = createdAt ?? timestampToMs(stringValue(payload.timestamp));
       }
     }
 
