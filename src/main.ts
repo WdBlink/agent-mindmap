@@ -7,6 +7,7 @@ import { SessionService } from "./core/session-service";
 import { ObsidianVaultStorage, SessionCache } from "./core/storage";
 import { DEFAULT_SETTINGS, normalizeSettings, type AgentMindmapSettings } from "./settings";
 import { AgentMindmapView, VIEW_TYPE_AGENT_MINDMAP } from "./ui/session-view";
+import { diagnosticSummary } from "./ui/view-model";
 import type { MergeWorkflowState, Message, OperationDiagnostic, Project, Session } from "./types";
 
 export default class AgentMindmapPlugin extends Plugin {
@@ -283,7 +284,7 @@ class AgentMindmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Codex session roots")
-      .setDesc("One path per line. Default Codex session and archived-session roots are always scanned as well.")
+      .setDesc("One path per line. When auto-discover is enabled, default Codex session and archived-session roots are included as well.")
       .addTextArea((text) =>
         text.setValue(this.plugin.settings.codexSessionRoots.join("\n")).onChange(async (value) => {
           this.plugin.settings.codexSessionRoots = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -293,7 +294,7 @@ class AgentMindmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Claude Code project roots")
-      .setDesc("One path per line. The default Claude Code projects root is always scanned as well.")
+      .setDesc("One path per line. When auto-discover is enabled, the default Claude Code projects root is included as well.")
       .addTextArea((text) =>
         text.setValue(this.plugin.settings.claudeProjectRoots.join("\n")).onChange(async (value) => {
           this.plugin.settings.claudeProjectRoots = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -362,7 +363,7 @@ class AgentMindmapSettingTab extends PluginSettingTab {
     containerEl.createEl("h3", { text: "Cache Diagnostics" });
     containerEl.createEl("p", {
       text: this.plugin.lastDiagnostics.length
-        ? this.plugin.lastDiagnostics.slice(0, 5).map((diagnostic) => `${diagnostic.code}: ${diagnostic.recoveryActionLabel}`).join(" ")
+        ? this.plugin.lastDiagnostics.slice(0, 5).map((diagnostic) => diagnosticSummary(diagnostic)).join(" ")
         : "No scan diagnostics captured in this session."
     });
   }

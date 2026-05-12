@@ -1,7 +1,7 @@
 import { ItemView, Notice, WorkspaceLeaf } from "obsidian";
 import type AgentMindmapPlugin from "../main";
 import type { Message, OperationDiagnostic, Session, SessionStatus } from "../types";
-import { DEFAULT_FILTERS, countSessions, filterSessions, recoveryLabels, type SessionFilters } from "./view-model";
+import { DEFAULT_FILTERS, countSessions, diagnosticSummary, filterSessions, recoveryLabels, type SessionFilters } from "./view-model";
 
 export const VIEW_TYPE_AGENT_MINDMAP = "agent-mindmap-sessions";
 
@@ -99,7 +99,7 @@ export class AgentMindmapView extends ItemView {
     }
     diagnostics.slice(0, 5).forEach((diagnostic) => {
       const row = container.createDiv(`agent-mindmap-health agent-mindmap-${diagnostic.severity}`);
-      row.createEl("span", { text: diagnostic.code });
+      row.createEl("span", { text: diagnosticSummary(diagnostic) });
       row.createEl("small", { text: diagnostic.recoveryActionLabel });
     });
   }

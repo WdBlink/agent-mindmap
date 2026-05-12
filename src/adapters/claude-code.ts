@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "fs/promises";
-import { basename, dirname } from "path";
+import { basename, dirname, join } from "path";
 import { filterMessage } from "../core/privacy";
-import type { ContentBlock, Message, Session } from "../types";
+import type { ContentBlock, Message, OperationDiagnostic, Session } from "../types";
 import { asRecord, collectJsonlFilesWithDiagnostics, jsonlLinesWithDiagnostics, stringValue } from "./fs-utils";
 import type { AdapterParseOptions, AdapterScanResult, TranscriptAdapter } from "./types";
 
@@ -16,6 +16,11 @@ interface ClaudeAppMetadata {
   title: string | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+interface ClaudeAppMetadataScanResult {
+  metadata: ClaudeAppMetadata[];
+  diagnostics: OperationDiagnostic[];
 }
 
 export class ClaudeCodeAdapter implements TranscriptAdapter {
@@ -64,8 +69,9 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
       }
     }
 
-    const metadata = await this.scanAppMetadata();
-    return { sessions: mergeAppMetadata(sessions, metadata), diagnostics };
+    const metadataScan = await this.scanAppMetadata();
+    diagnostics.push(...metadataScan.diagnostics);
+    return { sessions: mergeAppMetadata(sessions, metadataScan.metadata), diagnostics };
   }
 
   async parseMessages(sourcePath: string, sessionId?: string): Promise<Message[]> {
@@ -119,12 +125,13 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
     };
   }
 
-  private async scanAppMetadata(): Promise<ClaudeAppMetadata[]> {
+  private async scanAppMetadata(): Promise<ClaudeAppMetadataScanResult> {
     const metadata: ClaudeAppMetadata[] = [];
+    const diagnostics: OperationDiagnostic[] = [];
     for (const root of this.options.appSessionRoots ?? []) {
-      await collectClaudeAppMetadata(root, metadata);
+      await collectClaudeAppMetadata(root, metadata, diagnostics, true);
     }
-    return metadata;
+    return { metadata, diagnostics };
   }
 
   private parseMessagesFromLines(
@@ -198,40 +205,76 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
   }
 }
 
-async function collectClaudeAppMetadata(root: string, output: ClaudeAppMetadata[]): Promise<void> {
+async function collectClaudeAppMetadata(
+  root: string,
+  output: ClaudeAppMetadata[],
+  diagnostics: OperationDiagnostic[],
+  isRoot = false
+): Promise<number> {
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
-  } catch {
-    return;
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    diagnostics.push({
+      provider: "claude-code",
+      sourcePath: root,
+      code: code === "EACCES" || code === "EPERM" ? "permission-denied" : "path-missing",
+      severity: "warning",
+      message: code === "EACCES" || code === "EPERM"
+        ? `Cannot read Claude desktop metadata path ${root}: permission denied.`
+        : `Claude desktop metadata path does not exist or cannot be read: ${root}.`,
+      recoveryActionLabel: "Check source path"
+    });
+    return 0;
   }
 
-  for (const entry of entries) {
-    const path = `${root}/${entry.name}`;
+  let candidateCount = 0;
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = join(root, entry.name);
     if (entry.isDirectory()) {
-      await collectClaudeAppMetadata(path, output);
+      candidateCount += await collectClaudeAppMetadata(path, output, diagnostics);
       continue;
     }
     if (!entry.isFile() || !entry.name.startsWith("local_") || !entry.name.endsWith(".json")) {
       continue;
     }
-    const parsed = await parseClaudeAppMetadata(path);
+    candidateCount += 1;
+    const parsed = await parseClaudeAppMetadata(path, diagnostics);
     if (parsed) {
       output.push(parsed);
     }
   }
+
+  if (isRoot && candidateCount === 0) {
+    diagnostics.push({
+      provider: "claude-code",
+      sourcePath: root,
+      code: "empty-directory",
+      severity: "info",
+      message: `No Claude desktop local_*.json metadata files found under ${root}.`,
+      recoveryActionLabel: "Run Refresh Sessions"
+    });
+  }
+
+  return candidateCount;
 }
 
-async function parseClaudeAppMetadata(path: string): Promise<ClaudeAppMetadata | null> {
+async function parseClaudeAppMetadata(
+  path: string,
+  diagnostics: OperationDiagnostic[]
+): Promise<ClaudeAppMetadata | null> {
   try {
     const content = await readFile(path, "utf8");
     const value = asRecord(JSON.parse(content) as unknown);
     if (!value) {
+      diagnostics.push(invalidClaudeAppMetadataDiagnostic(path, "metadata JSON must be an object."));
       return null;
     }
     const cliSessionId = stringValue(value.cliSessionId) ?? stringValue(value.sessionId);
     const cwd = stringValue(value.cwd);
     if (!cliSessionId || !cwd) {
+      diagnostics.push(invalidClaudeAppMetadataDiagnostic(path, "metadata is missing cliSessionId/sessionId or cwd."));
       return null;
     }
     const info = await stat(path);
@@ -243,14 +286,22 @@ async function parseClaudeAppMetadata(path: string): Promise<ClaudeAppMetadata |
       createdAt: msValue(value.createdAt) ?? info.birthtimeMs,
       updatedAt: msValue(value.lastActivityAt) ?? msValue(value.updatedAt) ?? info.mtimeMs
     };
-  } catch {
+  } catch (error) {
+    diagnostics.push({
+      provider: "claude-code",
+      sourcePath: path,
+      code: "parse-failed",
+      severity: "warning",
+      message: `Could not parse Claude desktop metadata: ${error instanceof Error ? error.message : String(error)}.`,
+      recoveryActionLabel: "Open source transcript"
+    });
     return null;
   }
 }
 
 function mergeAppMetadata(sessions: Session[], metadata: ClaudeAppMetadata[]): Session[] {
   const byId = new Map(sessions.map((session) => [session.id, session]));
-  for (const item of metadata) {
+  for (const item of selectPreferredMetadata(metadata)) {
     const existing = byId.get(item.cliSessionId);
     if (existing) {
       existing.projectPath = item.cwd || existing.projectPath;
@@ -277,6 +328,34 @@ function mergeAppMetadata(sessions: Session[], metadata: ClaudeAppMetadata[]): S
     });
   }
   return Array.from(byId.values());
+}
+
+function selectPreferredMetadata(metadata: ClaudeAppMetadata[]): ClaudeAppMetadata[] {
+  const byId = new Map<string, ClaudeAppMetadata>();
+  for (const item of metadata.sort(compareClaudeAppMetadata)) {
+    byId.set(item.cliSessionId, item);
+  }
+  return Array.from(byId.values()).sort(compareClaudeAppMetadata);
+}
+
+function compareClaudeAppMetadata(left: ClaudeAppMetadata, right: ClaudeAppMetadata): number {
+  const leftUpdated = left.updatedAt ?? 0;
+  const rightUpdated = right.updatedAt ?? 0;
+  if (leftUpdated !== rightUpdated) {
+    return leftUpdated - rightUpdated;
+  }
+  return left.path.localeCompare(right.path);
+}
+
+function invalidClaudeAppMetadataDiagnostic(path: string, reason: string): OperationDiagnostic {
+  return {
+    provider: "claude-code",
+    sourcePath: path,
+    code: "extraction-gap",
+    severity: "info",
+    message: `Skipped Claude desktop metadata because ${reason}`,
+    recoveryActionLabel: "Check source path"
+  };
 }
 
 function msValue(value: unknown): number | null {

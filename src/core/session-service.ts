@@ -116,7 +116,6 @@ export class SessionService {
           ? {
               ...session,
               projectId: cached.projectId ?? session.projectId,
-              projectPath: cached.projectPath ?? session.projectPath,
               status: cached.status ?? session.status
             }
           : session;

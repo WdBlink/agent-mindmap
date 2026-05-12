@@ -8,7 +8,7 @@ import { filterMessage } from "../src/core/privacy";
 import { SessionService } from "../src/core/session-service";
 import { effectiveClaudeProjectRoots, effectiveCodexSessionRoots, expandHome } from "../src/core/source-discovery";
 import { DEFAULT_SETTINGS } from "../src/settings";
-import { DEFAULT_FILTERS, filterSessions, recoveryLabels } from "../src/ui/view-model";
+import { DEFAULT_FILTERS, diagnosticSummary, filterSessions, recoveryLabels } from "../src/ui/view-model";
 import type { ExtractedProjectMemory, Message, Project, Session, Trace } from "../src/types";
 import { SessionCache, type StoragePort } from "../src/core/storage";
 
@@ -293,6 +293,16 @@ describe("core MVP behavior", () => {
         }
       ])
     ).toEqual(["Check source path", "Open source transcript"]);
+    expect(
+      diagnosticSummary({
+        provider: "claude-code",
+        sourcePath: "/tmp/missing",
+        code: "path-missing",
+        severity: "warning",
+        message: "Missing",
+        recoveryActionLabel: "Check source path"
+      })
+    ).toContain("claude-code path-missing /tmp/missing");
   });
 
   it("supports selected-session map extract apply canvas workflow state", async () => {
@@ -353,6 +363,50 @@ describe("core MVP behavior", () => {
 
     expect(second.sessions[0]?.status).toBe("merged");
     expect(second.sessions[0]?.projectId).toBe("project-demo");
+  });
+
+  it("lets newly discovered metadata cwd replace stale cached project path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-cache-metadata-"));
+    const claudeProjects = join(root, "claude", "projects");
+    const projectDir = join(claudeProjects, "-repo-cli");
+    const appRoot = join(root, "Application Support", "Claude", "claude-code-sessions", "device", "account");
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(appRoot, { recursive: true });
+    await writeFile(
+      join(projectDir, "cli-session.jsonl"),
+      [
+        JSON.stringify({ sessionId: "cli-session", cwd: "/repo/cli", message: { role: "user", content: "目标：缓存 cwd" }, timestamp: "2026-05-12T00:00:00.000Z" })
+      ].join("\n")
+    );
+
+    const storage = new MemoryStorage();
+    const cache = new SessionCache(storage, "cache/sessions-cache.json");
+    const first = await new SessionService(
+      { ...TEST_SETTINGS, codexSessionRoots: [], claudeProjectRoots: [claudeProjects], claudeAppSessionRoots: [] },
+      cache
+    ).scanAllWithDiagnostics();
+    await writeFile(
+      join(appRoot, "local_cli-session.json"),
+      JSON.stringify({
+        cliSessionId: "cli-session",
+        cwd: "/repo/app",
+        title: "App Title",
+        lastActivityAt: Date.parse("2026-05-13T00:00:00.000Z")
+      })
+    );
+
+    const second = await new SessionService(
+      {
+        ...TEST_SETTINGS,
+        codexSessionRoots: [],
+        claudeProjectRoots: [claudeProjects],
+        claudeAppSessionRoots: [join(root, "Application Support", "Claude", "claude-code-sessions")]
+      },
+      cache
+    ).scanAllWithDiagnostics();
+
+    expect(first.sessions[0]?.projectPath).toBe("/repo/cli");
+    expect(second.sessions.find((item) => item.id === "cli-session")?.projectPath).toBe("/repo/app");
   });
 
   it("parses rich Codex and Claude fixtures with diagnostics and metadata", async () => {
@@ -482,6 +536,15 @@ describe("core MVP behavior", () => {
         lastActivityAt: Date.parse("2026-05-14T00:00:00.000Z")
       })
     );
+    await writeFile(
+      join(appRoot, "local_cli-session-newer.json"),
+      JSON.stringify({
+        cliSessionId: "cli-session",
+        cwd: "/repo/app-newer",
+        title: "Newer App Title",
+        lastActivityAt: Date.parse("2026-05-15T00:00:00.000Z")
+      })
+    );
 
     const service = new SessionService(
       {
@@ -498,12 +561,50 @@ describe("core MVP behavior", () => {
     const metadataOnly = result.sessions.find((item) => item.id === "metadata-only");
 
     expect(result.sessions.filter((item) => item.id === "cli-session")).toHaveLength(1);
-    expect(cli?.title).toBe("App Title");
-    expect(cli?.projectPath).toBe("/repo/app");
+    expect(cli?.title).toBe("Newer App Title");
+    expect(cli?.projectPath).toBe("/repo/app-newer");
     expect(cli?.rounds).toBe(1);
     expect(metadataOnly?.title).toBe("Metadata Only");
     expect(metadataOnly?.projectPath).toBe("/repo/metadata");
     expect(metadataOnly ? await service.parseMessages(metadataOnly) : []).toEqual([]);
+  });
+
+  it("reports Claude app metadata root and file diagnostics without blocking CLI sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-claude-app-diag-"));
+    const claudeProjects = join(root, "claude", "projects");
+    const projectDir = join(claudeProjects, "-repo-cli");
+    const emptyRoot = join(root, "empty-app-root");
+    const badRoot = join(root, "bad-app-root");
+    const badFile = join(badRoot, "local_bad.json");
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(emptyRoot, { recursive: true });
+    await mkdir(badRoot, { recursive: true });
+    await writeFile(
+      join(projectDir, "cli-session.jsonl"),
+      [
+        JSON.stringify({ sessionId: "cli-session", cwd: "/repo/cli", message: { role: "user", content: "目标：诊断" }, timestamp: "2026-05-12T00:00:00.000Z" })
+      ].join("\n")
+    );
+    await writeFile(badFile, "{bad-json");
+
+    const result = await new SessionService(
+      {
+        ...TEST_SETTINGS,
+        codexSessionRoots: [],
+        claudeProjectRoots: [claudeProjects],
+        claudeAppSessionRoots: [emptyRoot, join(root, "missing-app-root"), badRoot]
+      },
+      new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
+    ).scanAllWithDiagnostics();
+
+    expect(result.sessions.map((item) => item.id)).toContain("cli-session");
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: "claude-code", sourcePath: emptyRoot, code: "empty-directory" }),
+        expect.objectContaining({ provider: "claude-code", sourcePath: join(root, "missing-app-root"), code: "path-missing" }),
+        expect.objectContaining({ provider: "claude-code", sourcePath: badFile, code: "parse-failed" })
+      ])
+    );
   });
 
   it("redacts secrets without dropping legitimate tokenization content", () => {

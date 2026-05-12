@@ -82,3 +82,9 @@ export function countSessions(sessions: Session[]): SessionCounts {
 export function recoveryLabels(diagnostics: OperationDiagnostic[]): string[] {
   return Array.from(new Set(diagnostics.map((diagnostic) => diagnostic.recoveryActionLabel).filter(Boolean)));
 }
+
+export function diagnosticSummary(diagnostic: OperationDiagnostic): string {
+  const provider = diagnostic.provider ? `${diagnostic.provider} ` : "";
+  const source = diagnostic.sourcePath ? ` ${diagnostic.sourcePath}` : "";
+  return `${provider}${diagnostic.code}${source}: ${diagnostic.message}`;
+}
