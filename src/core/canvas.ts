@@ -122,10 +122,9 @@ export function mergeGeneratedCanvas(existing: ProjectCanvas | null, generated: 
   }
 
   const generatedIds = new Set(generated.nodes.map((node) => node.id));
+  const generatedEdgeIds = new Set(generated.edges.map((edge) => edge.id));
   const preservedNodes = existing.nodes.filter((node) => !generatedIds.has(node.id));
-  const preservedEdges = existing.edges.filter(
-    (edge) => !generatedIds.has(edge.fromNode) && !generatedIds.has(edge.toNode)
-  );
+  const preservedEdges = existing.edges.filter((edge) => !generatedEdgeIds.has(edge.id));
 
   return {
     nodes: [...generated.nodes, ...preservedNodes],

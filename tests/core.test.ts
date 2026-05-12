@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { generateProjectCanvas, mergeGeneratedCanvas, parseCanvas, serializeCanvas } from "../src/core/canvas";
@@ -346,6 +346,184 @@ describe("core MVP behavior", () => {
 
     expect(second.sessions[0]?.status).toBe("merged");
     expect(second.sessions[0]?.projectId).toBe("project-demo");
+  });
+
+  it("parses rich Codex and Claude fixtures with diagnostics and metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-rich-"));
+    const codexRoot = join(root, "codex");
+    const claudeRoot = join(root, "claude", "projects", "-Users-echooo-Repo-demo");
+    await mkdir(codexRoot, { recursive: true });
+    await mkdir(claudeRoot, { recursive: true });
+
+    await writeFile(
+      join(codexRoot, "rollout-2026-05-12T11-00-00-rich.jsonl"),
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "codex-rich", cwd: "/repo/codex-rich", title: "Codex Rich", timestamp: "2026-05-12T11:00:00.000Z" } }),
+        JSON.stringify({ type: "response_item", payload: { item: { type: "message", id: "u1", role: "user", content: [{ type: "input_text", text: "目标：验证 rich Codex fixture" }] }, timestamp: "2026-05-12T11:01:00.000Z" } }),
+        JSON.stringify({ type: "response_item", payload: { item: { type: "function_call", id: "tool1", name: "read_file", arguments: { path: "src/main.ts" } }, timestamp: "2026-05-12T11:02:00.000Z" } }),
+        "{bad-json",
+        JSON.stringify({ type: "response_item", payload: { item: { type: "function_call_output", id: "tool2", output: "implemented src/main.ts" }, timestamp: "2026-05-12T11:03:00.000Z" } }),
+        JSON.stringify({ type: "event_msg", payload: { message: "user: 下一步：生成 map.canvas" }, timestamp: "2026-05-12T11:04:00.000Z" })
+      ].join("\n")
+    );
+    await writeFile(
+      join(claudeRoot, "claude-rich.jsonl"),
+      [
+        JSON.stringify({ sessionId: "claude-rich", customTitle: "Claude Rich", message: { role: "user", content: "目标：验证 Claude fixture" }, timestamp: "2026-05-12T11:05:00.000Z" }),
+        JSON.stringify({ sessionId: "claude-rich", message: { role: "assistant", content: [{ type: "thinking", thinking: "分析" }, { type: "tool_use", name: "Edit", input: { file_path: "README.md" } }, { type: "tool_result", content: "完成 README.md" }] }, timestamp: "2026-05-12T11:06:00.000Z" })
+      ].join("\n")
+    );
+
+    const service = new SessionService(
+      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [join(root, "claude", "projects")] },
+      new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
+    );
+
+    const result = await service.scanAllWithDiagnostics();
+    const codex = result.sessions.find((item) => item.id === "codex-rich");
+    const claude = result.sessions.find((item) => item.id === "claude-rich");
+
+    expect(codex?.title).toBe("Codex Rich");
+    expect(codex?.projectPath).toBe("/repo/codex-rich");
+    expect(codex?.rounds).toBe(2);
+    expect(claude?.title).toBe("Claude Rich");
+    expect(claude?.projectPath).toBe("/Users/echooo/Repo/demo");
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "parse-failed")).toHaveLength(1);
+    expect(codex ? (await service.parseMessages(codex)).some((message) => message.isTool) : false).toBe(true);
+    expect(claude ? (await service.parseMessages(claude)).some((message) => message.isTool) : false).toBe(true);
+  });
+
+  it("redacts secrets without dropping legitimate tokenization content", () => {
+    const legitimate = extractProjectMemoryHeuristic(
+      session,
+      [
+        {
+          id: "m-tokenization",
+          sessionId: "s1",
+          role: "user",
+          content: "下一步：fix tokenization bug in src/tokenizer.ts",
+          timestamp: "2026-05-12T00:00:00.000Z",
+          lineNumber: 1
+        },
+        {
+          id: "m-secret",
+          sessionId: "s1",
+          role: "assistant",
+          content: "api_key=sk-real-secret token=abc123 Authorization: Bearer xyz password=hunter2 secret=value",
+          timestamp: "2026-05-12T00:01:00.000Z",
+          lineNumber: 2
+        }
+      ],
+      project.id,
+      { maxQuoteLength: 240 }
+    );
+    const serialized = JSON.stringify(legitimate);
+
+    expect(serialized).toContain("tokenization");
+    expect(serialized).toContain("[redacted]");
+    expect(serialized).not.toContain("sk-real-secret");
+    expect(serialized).not.toContain("abc123");
+    expect(serialized).not.toContain("hunter2");
+  });
+
+  it("does not treat same-size transcript rewrites as fresh cache entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-samesize-"));
+    const codexRoot = join(root, "codex");
+    await mkdir(codexRoot, { recursive: true });
+    const sessionPath = join(codexRoot, "session.jsonl");
+    const firstContent = JSON.stringify({ type: "session_meta", payload: { id: "same-size", cwd: "/repo/aaaa" } });
+    const secondContent = JSON.stringify({ type: "session_meta", payload: { id: "same-size", cwd: "/repo/bbbb" } });
+    expect(secondContent.length).toBe(firstContent.length);
+
+    await writeFile(sessionPath, firstContent);
+    const storage = new MemoryStorage();
+    const service = new SessionService(
+      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
+      new SessionCache(storage, "cache/sessions-cache.json")
+    );
+    const first = await service.scanAllWithDiagnostics();
+    await service.saveSession({ ...first.sessions[0], status: "merged", projectId: "project-old" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await writeFile(sessionPath, secondContent);
+    const now = new Date();
+    await utimes(sessionPath, now, now);
+
+    const second = await service.scanAllWithDiagnostics();
+
+    expect(second.sessions[0]?.projectPath).toBe("/repo/bbbb");
+    expect(second.sessions[0]?.status).toBe("new");
+    expect(second.sessions[0]?.projectId).toBeNull();
+  });
+
+  it("documents partial merge behavior when one target file conflicts", async () => {
+    const memory = minimalMemory([
+      {
+        id: "trace-1",
+        sessionId: "s1",
+        provider: "codex",
+        sourcePath: "/tmp/session.jsonl",
+        timestamp: "2026-05-12T00:00:00.000Z"
+      }
+    ]);
+    const preview = planManualMerge(project, memory);
+    const storage = new MemoryStorage();
+    await storage.write(project.stateFile, "# User maintained state\n");
+
+    const result = await applyManualMerge(storage, preview, { confirmed: true });
+
+    expect(result.conflicts.map((conflict) => conflict.sourcePath)).toEqual([project.stateFile]);
+    expect(result.writtenFiles).toHaveLength(6);
+    expect(await storage.read(project.stateFile)).toBe("# User maintained state\n");
+  });
+
+  it("preserves manual canvas edges connected to generated nodes", () => {
+    const memory = minimalMemory([
+      {
+        id: "trace-1",
+        sessionId: "s1",
+        provider: "codex",
+        sourcePath: "/tmp/session.jsonl",
+        timestamp: "2026-05-12T00:00:00.000Z"
+      }
+    ]);
+    const generated = generateProjectCanvas(project, memory);
+    const manualNode = {
+      id: "manual-note",
+      type: "text" as const,
+      text: "User note",
+      x: 1000,
+      y: 1000,
+      width: 300,
+      height: 160,
+      projectId: project.id,
+      nodeKind: "current-state" as const,
+      evidence: []
+    };
+    const manualEdge = {
+      id: "manual-to-generated",
+      fromNode: manualNode.id,
+      toNode: generated.nodes[0].id
+    };
+    const merged = mergeGeneratedCanvas(
+      {
+        nodes: [...generated.nodes, manualNode],
+        edges: [...generated.edges, manualEdge]
+      },
+      generated
+    );
+
+    expect(merged.nodes.some((node) => node.id === manualNode.id)).toBe(true);
+    expect(merged.edges.some((edge) => edge.id === manualEdge.id)).toBe(true);
+  });
+
+  it("leaves a corrupt existing canvas untouched and reports parse failure in the storage path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-corrupt-canvas-"));
+    const file = join(root, "map.canvas");
+    await writeFile(file, "{not-json");
+
+    await expect(readFile(file, "utf8").then(parseCanvas)).rejects.toThrow();
+    expect(await readFile(file, "utf8")).toBe("{not-json");
+    await rm(root, { recursive: true, force: true });
   });
 });
 

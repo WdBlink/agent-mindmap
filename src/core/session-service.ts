@@ -93,7 +93,10 @@ export class SessionService {
       try {
         const info = await stat(session.sourcePath);
         const cached = cache.entries[session.sourcePath]?.session;
-        const cachedStillCurrent = cached && cache.entries[session.sourcePath]?.size === info.size;
+        const cachedStillCurrent =
+          cached &&
+          cache.entries[session.sourcePath]?.size === info.size &&
+          cache.entries[session.sourcePath]?.mtimeMs === info.mtimeMs;
         const mergedSession: Session = cachedStillCurrent
           ? {
               ...session,

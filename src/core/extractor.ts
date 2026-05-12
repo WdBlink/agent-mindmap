@@ -1,5 +1,5 @@
 import { stableId } from "./ids";
-import { quoteForTrace } from "./privacy";
+import { quoteForTrace, redactSensitiveText } from "./privacy";
 import type {
   Artifact,
   Decision,
@@ -51,20 +51,21 @@ export function extractProjectMemoryHeuristic(
   const goals = uniqueNonEmpty([
     session.summary,
     firstMatchingLine(relevant, [/目标/, /\bgoal\b/i, /验收/])
-  ]);
+  ]).map(sanitizeExtractedText);
   const currentState = uniqueNonEmpty([
     session.lastPrompt,
     firstMatchingLine(relevant.slice().reverse(), [/当前/, /完成/, /implemented/i, /created/i])
-  ]);
+  ]).map(sanitizeExtractedText);
   const decisions = extractDecisions(session, relevant, options);
   const tasks = extractTasks(session, relevant, options);
   const artifacts = extractArtifacts(session, relevant, options);
-  const blockers = uniqueMatchingLines(relevant, BLOCKER_PATTERNS);
-  const ideas = uniqueMatchingLines(relevant, IDEA_PATTERNS);
+  const blockers = uniqueMatchingLines(relevant, BLOCKER_PATTERNS).map(sanitizeExtractedText);
+  const ideas = uniqueMatchingLines(relevant, IDEA_PATTERNS).map(sanitizeExtractedText);
   const openQuestions = relevant
     .flatMap((message) => message.content.split(/\r?\n/))
     .map((line) => line.trim())
     .filter((line) => line.endsWith("?") || line.endsWith("？"))
+    .map(sanitizeExtractedText)
     .slice(0, 20);
   const timelineEvents = buildTimeline(session, relevant, options);
 
@@ -92,7 +93,7 @@ function extractDecisions(
     .filter((message) => matchesAny(message.content, DECISION_PATTERNS))
     .slice(0, 20)
     .map((message) => {
-      const line = bestLine(message.content, DECISION_PATTERNS);
+      const line = sanitizeExtractedText(bestLine(message.content, DECISION_PATTERNS));
       return {
         title: shortTitle(line),
         date: message.timestamp ?? new Date(session.updatedAt).toISOString(),
@@ -109,7 +110,7 @@ function extractTasks(session: Session, messages: Message[], options: HeuristicE
     .filter((message) => matchesAny(message.content, TASK_PATTERNS))
     .slice(0, 30)
     .map((message) => {
-      const line = bestLine(message.content, TASK_PATTERNS);
+      const line = sanitizeExtractedText(bestLine(message.content, TASK_PATTERNS));
       return {
         title: line.replace(/^[-*]\s*\[[ x]\]\s*/i, "").trim(),
         status: inferTaskStatus(line),
@@ -157,7 +158,7 @@ function buildTimeline(
     {
       title: session.title ?? `Session ${session.id}`,
       date: source.timestamp ?? new Date(session.updatedAt).toISOString(),
-      description: shortTitle(source.content, 180),
+      description: shortTitle(sanitizeExtractedText(source.content), 180),
       sourceSessionId: session.id,
       traces: [traceForMessage(session, source, options.maxQuoteLength)]
     }
@@ -209,11 +210,15 @@ function bestLine(content: string, patterns: RegExp[]): string {
 }
 
 function shortTitle(value: string, maxLength = 96): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
+  const normalized = sanitizeExtractedText(value).replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function sanitizeExtractedText(value: string): string {
+  return redactSensitiveText(value);
 }
 
 function inferTaskStatus(line: string): Task["status"] {

@@ -120,8 +120,9 @@ export class CodexAdapter implements TranscriptAdapter {
       const payload = asRecord(record.payload);
       const timestamp = stringValue(record.timestamp) ?? stringValue(payload?.timestamp);
       const maybeMessage =
+        this.messageFromEvent(sessionId, lineNumber, type, payload, timestamp) ??
         this.messageFromResponseItem(sessionId, sourcePath, lineNumber, payload, timestamp) ??
-        this.messageFromEvent(sessionId, lineNumber, type, payload, timestamp);
+        null;
 
       if (!maybeMessage) {
         continue;
@@ -201,19 +202,6 @@ export class CodexAdapter implements TranscriptAdapter {
       };
     }
 
-    const eventMessage = stringValue(payload?.message);
-    if (eventMessage && sourcePath) {
-      return {
-        id: `${sessionId}:${lineNumber}`,
-        sessionId,
-        role: "system",
-        content: eventMessage,
-        timestamp,
-        lineNumber,
-        isMeta: true
-      };
-    }
-
     return null;
   }
 
@@ -233,7 +221,7 @@ export class CodexAdapter implements TranscriptAdapter {
       return null;
     }
 
-    const role = message.startsWith("user") ? "user" : "system";
+    const role = /^user\b|^user:/i.test(message) ? "user" : "system";
     return {
       id: `${sessionId}:${lineNumber}`,
       sessionId,
