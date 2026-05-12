@@ -178,6 +178,7 @@ export interface SessionCacheEntry {
   path: string;
   size: number;
   mtimeMs: number;
+  contentHash?: string;
   session: Session;
 }
 

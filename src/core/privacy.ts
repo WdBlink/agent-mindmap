@@ -6,6 +6,7 @@ export interface PrivacyFilterOptions {
 }
 
 const REDACTION = "[redacted]";
+const SENSITIVE_KEY = /^(api[_-]?key|authorization|password|secret|token)$/i;
 
 export function isInjectedContext(content: string, patterns: string[]): boolean {
   const lower = content.toLowerCase();
@@ -14,11 +15,31 @@ export function isInjectedContext(content: string, patterns: string[]): boolean 
 
 export function redactSensitiveText(content: string): string {
   return content
-    .replace(/(api[_-]?key\s*[:=]\s*)(["']?)[^\s"',]+/gi, `$1$2${REDACTION}`)
-    .replace(/(authorization\s*:\s*bearer\s+)[^\s"',]+/gi, `$1${REDACTION}`)
-    .replace(/(password\s*[:=]\s*)(["']?)[^\s"',]+/gi, `$1$2${REDACTION}`)
-    .replace(/(secret\s*[:=]\s*)(["']?)[^\s"',]+/gi, `$1$2${REDACTION}`)
-    .replace(/(token\s*[:=]\s*)(["']?)[^\s"',]+/gi, `$1$2${REDACTION}`);
+    .replace(/(\bapi[_-]?key\b["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, `$1${REDACTION}`)
+    .replace(/(\bauthorization\b["']?\s*:\s*["']?bearer\s+)[^\s"',}]+/gi, `$1${REDACTION}`)
+    .replace(/(\bpassword\b["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, `$1${REDACTION}`)
+    .replace(/(\bsecret\b["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, `$1${REDACTION}`)
+    .replace(/(\btoken\b["']?\s*[:=]\s*["']?)[^\s"',}]+/gi, `$1${REDACTION}`);
+}
+
+export function redactSensitiveValue(value: unknown, keyHint?: string): unknown {
+  if (keyHint && SENSITIVE_KEY.test(keyHint)) {
+    return REDACTION;
+  }
+  if (typeof value === "string") {
+    return redactSensitiveText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitiveValue(item));
+  }
+  if (value && typeof value === "object") {
+    const redacted: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      redacted[key] = redactSensitiveValue(child, key);
+    }
+    return redacted;
+  }
+  return value;
 }
 
 export function filterMessage(message: Message, options: PrivacyFilterOptions): Message | null {
@@ -33,6 +54,9 @@ export function filterMessage(message: Message, options: PrivacyFilterOptions): 
     }
     if (block.type === "tool_result") {
       return { ...block, content: redactSensitiveText(block.content) };
+    }
+    if (block.type === "tool_use") {
+      return { ...block, input: redactSensitiveValue(block.input) };
     }
     return block;
   });

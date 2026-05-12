@@ -1,4 +1,5 @@
-import { stat } from "fs/promises";
+import { createHash } from "crypto";
+import { readFile, stat } from "fs/promises";
 import type { AgentMindmapSettings } from "../settings";
 import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
@@ -70,10 +71,12 @@ export class SessionService {
   async saveSession(session: Session): Promise<void> {
     try {
       const info = await stat(session.sourcePath);
+      const contentHash = await hashFile(session.sourcePath);
       await this.cache.put({
         path: session.sourcePath,
         size: info.size,
         mtimeMs: info.mtimeMs,
+        contentHash,
         session
       });
     } catch {
@@ -92,11 +95,14 @@ export class SessionService {
     for (const session of sessions) {
       try {
         const info = await stat(session.sourcePath);
-        const cached = cache.entries[session.sourcePath]?.session;
+        const contentHash = await hashFile(session.sourcePath);
+        const cachedEntry = cache.entries[session.sourcePath];
+        const cached = cachedEntry?.session;
         const cachedStillCurrent =
           cached &&
-          cache.entries[session.sourcePath]?.size === info.size &&
-          cache.entries[session.sourcePath]?.mtimeMs === info.mtimeMs;
+          cachedEntry?.size === info.size &&
+          cachedEntry.mtimeMs === info.mtimeMs &&
+          cachedEntry.contentHash === contentHash;
         const mergedSession: Session = cachedStillCurrent
           ? {
               ...session,
@@ -110,6 +116,7 @@ export class SessionService {
           path: session.sourcePath,
           size: info.size,
           mtimeMs: info.mtimeMs,
+          contentHash,
           session: mergedSession
         };
         cache.entries[entry.path] = entry;
@@ -127,4 +134,8 @@ export class SessionService {
 
     await this.cache.save(cache);
   }
+}
+
+async function hashFile(path: string): Promise<string> {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
 }

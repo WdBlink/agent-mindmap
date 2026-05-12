@@ -1,9 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { generateProjectCanvas, mergeGeneratedCanvas, parseCanvas, serializeCanvas } from "../src/core/canvas";
 import { extractProjectMemoryHeuristic } from "../src/core/extractor";
 import { applyManualMerge, planManualMerge } from "../src/core/merge";
+import { filterMessage } from "../src/core/privacy";
 import { SessionService } from "../src/core/session-service";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { DEFAULT_FILTERS, filterSessions, recoveryLabels } from "../src/ui/view-model";
@@ -426,7 +427,44 @@ describe("core MVP behavior", () => {
     expect(serialized).not.toContain("hunter2");
   });
 
-  it("does not treat same-size transcript rewrites as fresh cache entries", async () => {
+  it("redacts structured tool input without dropping legitimate tokenization content", () => {
+    const filtered = filterMessage(
+      {
+        id: "m-tool",
+        sessionId: "s1",
+        role: "tool",
+        content: JSON.stringify({
+          name: "request",
+          arguments: {
+            token: "abc123",
+            nested: { password: "hunter2" },
+            note: "fix tokenization bug"
+          }
+        }),
+        timestamp: "2026-05-12T00:00:00.000Z",
+        blocks: [
+          {
+            type: "tool_use",
+            name: "request",
+            input: {
+              token: "abc123",
+              nested: { password: "hunter2" },
+              note: "fix tokenization bug"
+            }
+          }
+        ]
+      },
+      { patterns: [], maxQuoteLength: 240 }
+    );
+    const serialized = JSON.stringify(filtered);
+
+    expect(serialized).toContain("tokenization");
+    expect(serialized).toContain("[redacted]");
+    expect(serialized).not.toContain("abc123");
+    expect(serialized).not.toContain("hunter2");
+  });
+
+  it("does not treat same-size same-mtime transcript rewrites as fresh cache entries", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-mindmap-samesize-"));
     const codexRoot = join(root, "codex");
     await mkdir(codexRoot, { recursive: true });
@@ -443,10 +481,9 @@ describe("core MVP behavior", () => {
     );
     const first = await service.scanAllWithDiagnostics();
     await service.saveSession({ ...first.sessions[0], status: "merged", projectId: "project-old" });
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    const originalStat = await stat(sessionPath);
     await writeFile(sessionPath, secondContent);
-    const now = new Date();
-    await utimes(sessionPath, now, now);
+    await utimes(sessionPath, originalStat.atime, originalStat.mtime);
 
     const second = await service.scanAllWithDiagnostics();
 
