@@ -283,7 +283,7 @@ class AgentMindmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Codex session roots")
-      .setDesc("One path per line.")
+      .setDesc("One path per line. Default Codex session and archived-session roots are always scanned as well.")
       .addTextArea((text) =>
         text.setValue(this.plugin.settings.codexSessionRoots.join("\n")).onChange(async (value) => {
           this.plugin.settings.codexSessionRoots = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -293,10 +293,30 @@ class AgentMindmapSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Claude Code project roots")
-      .setDesc("One path per line.")
+      .setDesc("One path per line. The default Claude Code projects root is always scanned as well.")
       .addTextArea((text) =>
         text.setValue(this.plugin.settings.claudeProjectRoots.join("\n")).onChange(async (value) => {
           this.plugin.settings.claudeProjectRoots = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Claude desktop app session roots")
+      .setDesc("One path per line. Used read-only to enrich Claude Code session cwd/title metadata.")
+      .addTextArea((text) =>
+        text.setValue(this.plugin.settings.claudeAppSessionRoots.join("\n")).onChange(async (value) => {
+          this.plugin.settings.claudeAppSessionRoots = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName("Auto-discover default session roots")
+      .setDesc("Always include canonical Codex, Claude Code, and Claude desktop session locations in scans.")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.autoDiscoverSessionRoots).onChange(async (value) => {
+          this.plugin.settings.autoDiscoverSessionRoots = value;
           await this.plugin.saveSettings();
         })
       );

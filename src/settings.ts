@@ -5,6 +5,8 @@ export interface AgentMindmapSettings {
   memoryRoot: string;
   codexSessionRoots: string[];
   claudeProjectRoots: string[];
+  claudeAppSessionRoots: string[];
+  autoDiscoverSessionRoots: boolean;
   privacyPatterns: string[];
   maxQuoteLength: number;
   manualMergeOnly: boolean;
@@ -34,6 +36,10 @@ export const DEFAULT_SETTINGS: AgentMindmapSettings = {
     join(homedir(), ".codex", "archived_sessions")
   ],
   claudeProjectRoots: [join(homedir(), ".claude", "projects")],
+  claudeAppSessionRoots: [
+    join(homedir(), "Library", "Application Support", "Claude", "claude-code-sessions")
+  ],
+  autoDiscoverSessionRoots: true,
   privacyPatterns: DEFAULT_PRIVACY_PATTERNS,
   maxQuoteLength: 280,
   manualMergeOnly: true
@@ -49,6 +55,10 @@ export function normalizeSettings(input?: Partial<AgentMindmapSettings>): AgentM
     claudeProjectRoots: input?.claudeProjectRoots?.length
       ? input.claudeProjectRoots
       : DEFAULT_SETTINGS.claudeProjectRoots,
+    claudeAppSessionRoots: input?.claudeAppSessionRoots?.length
+      ? input.claudeAppSessionRoots
+      : DEFAULT_SETTINGS.claudeAppSessionRoots,
+    autoDiscoverSessionRoots: input?.autoDiscoverSessionRoots ?? DEFAULT_SETTINGS.autoDiscoverSessionRoots,
     privacyPatterns: input?.privacyPatterns?.length
       ? input.privacyPatterns
       : DEFAULT_SETTINGS.privacyPatterns,

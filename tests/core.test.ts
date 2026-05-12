@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "fs/promises";
 import { join } from "path";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { generateProjectCanvas, mergeGeneratedCanvas, parseCanvas, serializeCanvas } from "../src/core/canvas";
 import { extractProjectMemoryHeuristic } from "../src/core/extractor";
 import { applyManualMerge, planManualMerge } from "../src/core/merge";
 import { filterMessage } from "../src/core/privacy";
 import { SessionService } from "../src/core/session-service";
+import { effectiveClaudeProjectRoots, effectiveCodexSessionRoots, expandHome } from "../src/core/source-discovery";
 import { DEFAULT_SETTINGS } from "../src/settings";
 import { DEFAULT_FILTERS, filterSessions, recoveryLabels } from "../src/ui/view-model";
 import type { ExtractedProjectMemory, Message, Project, Session, Trace } from "../src/types";
@@ -63,6 +64,11 @@ const project: Project = {
   canvasFile: "AI-Projects/Projects/demo/map.canvas",
   createdAt: 1,
   updatedAt: 2
+};
+
+const TEST_SETTINGS = {
+  ...DEFAULT_SETTINGS,
+  autoDiscoverSessionRoots: false
 };
 
 describe("core MVP behavior", () => {
@@ -221,7 +227,7 @@ describe("core MVP behavior", () => {
 
     const service = new SessionService(
       {
-        ...DEFAULT_SETTINGS,
+        ...TEST_SETTINGS,
         codexSessionRoots: [codexRoot],
         claudeProjectRoots: [join(root, "missing-claude")]
       },
@@ -240,7 +246,7 @@ describe("core MVP behavior", () => {
     const emptyRoot = join(root, "empty");
     await mkdir(emptyRoot, { recursive: true });
     const service = new SessionService(
-      { ...DEFAULT_SETTINGS, codexSessionRoots: [emptyRoot], claudeProjectRoots: [] },
+      { ...TEST_SETTINGS, codexSessionRoots: [emptyRoot], claudeProjectRoots: [] },
       new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
     );
 
@@ -311,7 +317,7 @@ describe("core MVP behavior", () => {
     );
     const storage = new MemoryStorage();
     const service = new SessionService(
-      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
+      { ...TEST_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
       new SessionCache(storage, "cache/sessions-cache.json")
     );
     const result = await service.scanAllWithDiagnostics();
@@ -336,7 +342,7 @@ describe("core MVP behavior", () => {
     const storage = new MemoryStorage();
     const cache = new SessionCache(storage, "cache/sessions-cache.json");
     const service = new SessionService(
-      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
+      { ...TEST_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
       cache
     );
     const first = await service.scanAllWithDiagnostics();
@@ -376,7 +382,7 @@ describe("core MVP behavior", () => {
     );
 
     const service = new SessionService(
-      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [join(root, "claude", "projects")] },
+      { ...TEST_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [join(root, "claude", "projects")] },
       new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
     );
 
@@ -392,6 +398,112 @@ describe("core MVP behavior", () => {
     expect(result.diagnostics.filter((diagnostic) => diagnostic.code === "parse-failed")).toHaveLength(1);
     expect(codex ? (await service.parseMessages(codex)).some((message) => message.isTool) : false).toBe(true);
     expect(claude ? (await service.parseMessages(claude)).some((message) => message.isTool) : false).toBe(true);
+  });
+
+  it("keeps canonical roots additive and expands home paths", () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      codexSessionRoots: ["~/custom-codex"],
+      claudeProjectRoots: ["~/custom-claude"],
+      autoDiscoverSessionRoots: true
+    };
+
+    expect(expandHome("~/x")).toBe(join(homedir(), "x"));
+    expect(effectiveCodexSessionRoots(settings)).toEqual([
+      join(homedir(), "custom-codex"),
+      join(homedir(), ".codex", "sessions"),
+      join(homedir(), ".codex", "archived_sessions")
+    ]);
+    expect(effectiveClaudeProjectRoots(settings)).toEqual([
+      join(homedir(), "custom-claude"),
+      join(homedir(), ".claude", "projects")
+    ]);
+  });
+
+  it("discovers archived Codex sessions when the archived root is included", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-codex-archives-"));
+    const activeRoot = join(root, "codex", "sessions");
+    const archivedRoot = join(root, "codex", "archived_sessions");
+    await mkdir(activeRoot, { recursive: true });
+    await mkdir(archivedRoot, { recursive: true });
+    await writeFile(
+      join(archivedRoot, "rollout-2026-05-12T00-00-00-archived.jsonl"),
+      [
+        JSON.stringify({ type: "session_meta", payload: { id: "codex-archived", cwd: "/repo/archived" } }),
+        JSON.stringify({ type: "event_msg", payload: { message: "user: archived project" } })
+      ].join("\n")
+    );
+
+    const service = new SessionService(
+      {
+        ...TEST_SETTINGS,
+        codexSessionRoots: [activeRoot, archivedRoot],
+        claudeProjectRoots: [],
+        claudeAppSessionRoots: []
+      },
+      new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
+    );
+
+    const result = await service.scanAllWithDiagnostics();
+
+    expect(result.sessions.map((item) => item.id)).toContain("codex-archived");
+    expect(result.sessions.find((item) => item.id === "codex-archived")?.projectPath).toBe("/repo/archived");
+  });
+
+  it("uses Claude app metadata to enrich and recover Claude Code sessions", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-mindmap-claude-app-"));
+    const claudeProjects = join(root, "claude", "projects");
+    const projectDir = join(claudeProjects, "-repo-cli");
+    const appRoot = join(root, "Application Support", "Claude", "claude-code-sessions", "device", "account");
+    await mkdir(projectDir, { recursive: true });
+    await mkdir(appRoot, { recursive: true });
+    await writeFile(
+      join(projectDir, "cli-session.jsonl"),
+      [
+        JSON.stringify({ sessionId: "cli-session", cwd: "/repo/cli", message: { role: "user", content: "目标：CLI" }, timestamp: "2026-05-12T00:00:00.000Z" })
+      ].join("\n")
+    );
+    await writeFile(
+      join(appRoot, "local_cli-session.json"),
+      JSON.stringify({
+        cliSessionId: "cli-session",
+        cwd: "/repo/app",
+        title: "App Title",
+        createdAt: Date.parse("2026-05-11T00:00:00.000Z"),
+        lastActivityAt: Date.parse("2026-05-13T00:00:00.000Z")
+      })
+    );
+    await writeFile(
+      join(appRoot, "local_metadata-only.json"),
+      JSON.stringify({
+        cliSessionId: "metadata-only",
+        cwd: "/repo/metadata",
+        title: "Metadata Only",
+        lastActivityAt: Date.parse("2026-05-14T00:00:00.000Z")
+      })
+    );
+
+    const service = new SessionService(
+      {
+        ...TEST_SETTINGS,
+        codexSessionRoots: [],
+        claudeProjectRoots: [claudeProjects],
+        claudeAppSessionRoots: [join(root, "Application Support", "Claude", "claude-code-sessions")]
+      },
+      new SessionCache(new MemoryStorage(), "cache/sessions-cache.json")
+    );
+
+    const result = await service.scanAllWithDiagnostics();
+    const cli = result.sessions.find((item) => item.id === "cli-session");
+    const metadataOnly = result.sessions.find((item) => item.id === "metadata-only");
+
+    expect(result.sessions.filter((item) => item.id === "cli-session")).toHaveLength(1);
+    expect(cli?.title).toBe("App Title");
+    expect(cli?.projectPath).toBe("/repo/app");
+    expect(cli?.rounds).toBe(1);
+    expect(metadataOnly?.title).toBe("Metadata Only");
+    expect(metadataOnly?.projectPath).toBe("/repo/metadata");
+    expect(metadataOnly ? await service.parseMessages(metadataOnly) : []).toEqual([]);
   });
 
   it("redacts secrets without dropping legitimate tokenization content", () => {
@@ -476,7 +588,7 @@ describe("core MVP behavior", () => {
     await writeFile(sessionPath, firstContent);
     const storage = new MemoryStorage();
     const service = new SessionService(
-      { ...DEFAULT_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
+      { ...TEST_SETTINGS, codexSessionRoots: [codexRoot], claudeProjectRoots: [] },
       new SessionCache(storage, "cache/sessions-cache.json")
     );
     const first = await service.scanAllWithDiagnostics();

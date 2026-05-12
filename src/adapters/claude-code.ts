@@ -1,14 +1,27 @@
-import { readFile } from "fs/promises";
+import { readdir, readFile, stat } from "fs/promises";
 import { basename, dirname } from "path";
 import { filterMessage } from "../core/privacy";
 import type { ContentBlock, Message, Session } from "../types";
 import { asRecord, collectJsonlFilesWithDiagnostics, jsonlLinesWithDiagnostics, stringValue } from "./fs-utils";
 import type { AdapterParseOptions, AdapterScanResult, TranscriptAdapter } from "./types";
 
+interface ClaudeCodeAdapterOptions extends AdapterParseOptions {
+  appSessionRoots?: string[];
+}
+
+interface ClaudeAppMetadata {
+  path: string;
+  cliSessionId: string;
+  cwd: string;
+  title: string | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
 export class ClaudeCodeAdapter implements TranscriptAdapter {
   readonly provider = "claude-code" as const;
 
-  constructor(private readonly options: AdapterParseOptions) {}
+  constructor(private readonly options: ClaudeCodeAdapterOptions) {}
 
   async scan(roots: string[]): Promise<AdapterScanResult> {
     const { files, diagnostics } = await collectJsonlFilesWithDiagnostics(roots, this.provider);
@@ -51,10 +64,14 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
       }
     }
 
-    return { sessions, diagnostics };
+    const metadata = await this.scanAppMetadata();
+    return { sessions: mergeAppMetadata(sessions, metadata), diagnostics };
   }
 
   async parseMessages(sourcePath: string, sessionId?: string): Promise<Message[]> {
+    if (!sourcePath.endsWith(".jsonl")) {
+      return [];
+    }
     const content = await readFile(sourcePath, "utf8");
     const parsed = jsonlLinesWithDiagnostics(content, sourcePath, this.provider);
     return this.parseMessagesFromLines(sourcePath, parsed.lines, sessionId ?? basename(sourcePath, ".jsonl"));
@@ -100,6 +117,14 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
       summary,
       createdAt
     };
+  }
+
+  private async scanAppMetadata(): Promise<ClaudeAppMetadata[]> {
+    const metadata: ClaudeAppMetadata[] = [];
+    for (const root of this.options.appSessionRoots ?? []) {
+      await collectClaudeAppMetadata(root, metadata);
+    }
+    return metadata;
   }
 
   private parseMessagesFromLines(
@@ -171,6 +196,98 @@ export class ClaudeCodeAdapter implements TranscriptAdapter {
       blocks
     };
   }
+}
+
+async function collectClaudeAppMetadata(root: string, output: ClaudeAppMetadata[]): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const path = `${root}/${entry.name}`;
+    if (entry.isDirectory()) {
+      await collectClaudeAppMetadata(path, output);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.startsWith("local_") || !entry.name.endsWith(".json")) {
+      continue;
+    }
+    const parsed = await parseClaudeAppMetadata(path);
+    if (parsed) {
+      output.push(parsed);
+    }
+  }
+}
+
+async function parseClaudeAppMetadata(path: string): Promise<ClaudeAppMetadata | null> {
+  try {
+    const content = await readFile(path, "utf8");
+    const value = asRecord(JSON.parse(content) as unknown);
+    if (!value) {
+      return null;
+    }
+    const cliSessionId = stringValue(value.cliSessionId) ?? stringValue(value.sessionId);
+    const cwd = stringValue(value.cwd);
+    if (!cliSessionId || !cwd) {
+      return null;
+    }
+    const info = await stat(path);
+    return {
+      path,
+      cliSessionId,
+      cwd,
+      title: stringValue(value.title) ?? stringValue(value.customTitle),
+      createdAt: msValue(value.createdAt) ?? info.birthtimeMs,
+      updatedAt: msValue(value.lastActivityAt) ?? msValue(value.updatedAt) ?? info.mtimeMs
+    };
+  } catch {
+    return null;
+  }
+}
+
+function mergeAppMetadata(sessions: Session[], metadata: ClaudeAppMetadata[]): Session[] {
+  const byId = new Map(sessions.map((session) => [session.id, session]));
+  for (const item of metadata) {
+    const existing = byId.get(item.cliSessionId);
+    if (existing) {
+      existing.projectPath = item.cwd || existing.projectPath;
+      existing.title = item.title ?? existing.title;
+      existing.createdAt = item.createdAt ? Math.min(existing.createdAt, item.createdAt) : existing.createdAt;
+      existing.updatedAt = item.updatedAt ? Math.max(existing.updatedAt, item.updatedAt) : existing.updatedAt;
+      continue;
+    }
+    const updatedAt = item.updatedAt ?? Date.now();
+    byId.set(item.cliSessionId, {
+      id: item.cliSessionId,
+      provider: "claude-code",
+      sourcePath: item.path,
+      projectPath: item.cwd,
+      projectId: null,
+      title: item.title ?? basename(item.cwd),
+      summary: null,
+      lastPrompt: null,
+      createdAt: item.createdAt ?? updatedAt,
+      updatedAt,
+      messageCount: 0,
+      rounds: 0,
+      status: "new"
+    });
+  }
+  return Array.from(byId.values());
+}
+
+function msValue(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+  return null;
 }
 
 function extractClaudeBlocks(content: unknown): ContentBlock[] {

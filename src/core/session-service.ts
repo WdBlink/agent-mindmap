@@ -5,6 +5,7 @@ import { ClaudeCodeAdapter } from "../adapters/claude-code";
 import { CodexAdapter } from "../adapters/codex";
 import type { TranscriptAdapter } from "../adapters/types";
 import type { Message, OperationDiagnostic, Session, SessionCacheEntry } from "../types";
+import { effectiveClaudeAppSessionRoots, effectiveClaudeProjectRoots, effectiveCodexSessionRoots } from "./source-discovery";
 import { SessionCache } from "./storage";
 
 export interface SessionScanResult {
@@ -23,7 +24,13 @@ export class SessionService {
       privacyPatterns: settings.privacyPatterns,
       maxQuoteLength: settings.maxQuoteLength
     };
-    this.adapters = [new CodexAdapter(adapterOptions), new ClaudeCodeAdapter(adapterOptions)];
+    this.adapters = [
+      new CodexAdapter(adapterOptions),
+      new ClaudeCodeAdapter({
+        ...adapterOptions,
+        appSessionRoots: effectiveClaudeAppSessionRoots(settings)
+      })
+    ];
   }
 
   async scanAll(): Promise<Session[]> {
@@ -33,7 +40,9 @@ export class SessionService {
   async scanAllWithDiagnostics(): Promise<SessionScanResult> {
     const results = await Promise.all(
       this.adapters.map(async (adapter) => {
-        const roots = adapter.provider === "codex" ? this.settings.codexSessionRoots : this.settings.claudeProjectRoots;
+        const roots = adapter.provider === "codex"
+          ? effectiveCodexSessionRoots(this.settings)
+          : effectiveClaudeProjectRoots(this.settings);
         try {
           return await adapter.scan(roots);
         } catch (error) {
@@ -53,7 +62,7 @@ export class SessionService {
       })
     );
 
-    const sessions = results.flatMap((result) => result.sessions);
+    const sessions = dedupeSessions(results.flatMap((result) => result.sessions));
     const diagnostics = results.flatMap((result) => result.diagnostics);
     const sorted = sessions.sort((left, right) => right.updatedAt - left.updatedAt);
     await this.updateCache(sorted);
@@ -138,4 +147,36 @@ export class SessionService {
 
 async function hashFile(path: string): Promise<string> {
   return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+function dedupeSessions(sessions: Session[]): Session[] {
+  const byKey = new Map<string, Session>();
+  for (const session of sessions) {
+    const key = `${session.provider}:${session.id}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, session);
+      continue;
+    }
+    byKey.set(key, preferSession(existing, session));
+  }
+  return Array.from(byKey.values());
+}
+
+function preferSession(left: Session, right: Session): Session {
+  const leftTranscript = left.sourcePath.endsWith(".jsonl");
+  const rightTranscript = right.sourcePath.endsWith(".jsonl");
+  const base = rightTranscript && !leftTranscript ? right : left;
+  const enrichment = base === left ? right : left;
+  return {
+    ...base,
+    title: enrichment.title ?? base.title,
+    summary: base.summary ?? enrichment.summary,
+    lastPrompt: base.lastPrompt ?? enrichment.lastPrompt,
+    projectPath: enrichment.projectPath ?? base.projectPath,
+    createdAt: Math.min(base.createdAt, enrichment.createdAt),
+    updatedAt: Math.max(base.updatedAt, enrichment.updatedAt),
+    messageCount: Math.max(base.messageCount, enrichment.messageCount),
+    rounds: Math.max(base.rounds, enrichment.rounds)
+  };
 }
