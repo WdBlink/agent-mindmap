@@ -74,7 +74,7 @@ export async function applyManualMerge(
 
 function renderProjectState(project: Project, memory: ExtractedProjectMemory): string {
   return [
-    frontmatter(project, "project-state"),
+    frontmatter(project, "project-state", generatedAt(memory, project.updatedAt)),
     GENERATED_NOTICE,
     `# ${project.name} Project State`,
     "",
@@ -91,7 +91,7 @@ function renderProjectState(project: Project, memory: ExtractedProjectMemory): s
 
 function renderTimeline(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "timeline"),
+    frontmatterByProject(memory.projectId, "timeline", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Timeline",
     "",
@@ -107,7 +107,7 @@ function renderTimeline(memory: ExtractedProjectMemory): string {
 
 function renderDecisions(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "decisions"),
+    frontmatterByProject(memory.projectId, "decisions", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Decisions",
     "",
@@ -126,7 +126,7 @@ function renderDecisions(memory: ExtractedProjectMemory): string {
 
 function renderOpenLoops(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "open-loops"),
+    frontmatterByProject(memory.projectId, "open-loops", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Open Loops",
     "",
@@ -139,7 +139,7 @@ function renderOpenLoops(memory: ExtractedProjectMemory): string {
 
 function renderTasks(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "tasks"),
+    frontmatterByProject(memory.projectId, "tasks", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Tasks",
     "",
@@ -152,7 +152,7 @@ function renderTasks(memory: ExtractedProjectMemory): string {
 
 function renderIdeas(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "ideas"),
+    frontmatterByProject(memory.projectId, "ideas", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Ideas",
     "",
@@ -162,7 +162,7 @@ function renderIdeas(memory: ExtractedProjectMemory): string {
 
 function renderArtifacts(memory: ExtractedProjectMemory): string {
   return [
-    frontmatterByProject(memory.projectId, "artifacts"),
+    frontmatterByProject(memory.projectId, "artifacts", generatedAt(memory)),
     GENERATED_NOTICE,
     "# Artifacts",
     "",
@@ -173,27 +173,35 @@ function renderArtifacts(memory: ExtractedProjectMemory): string {
   ].join("\n");
 }
 
-function frontmatter(project: Project, kind: string): string {
+function frontmatter(project: Project, kind: string, updatedAt: string): string {
   return [
     "---",
     `projectId: ${JSON.stringify(project.id)}`,
     `projectName: ${JSON.stringify(project.name)}`,
     `kind: ${JSON.stringify(kind)}`,
-    `updatedAt: ${JSON.stringify(new Date().toISOString())}`,
+    `updatedAt: ${JSON.stringify(updatedAt)}`,
     "---",
     ""
   ].join("\n");
 }
 
-function frontmatterByProject(projectId: string, kind: string): string {
+function frontmatterByProject(projectId: string, kind: string, updatedAt: string): string {
   return [
     "---",
     `projectId: ${JSON.stringify(projectId)}`,
     `kind: ${JSON.stringify(kind)}`,
-    `updatedAt: ${JSON.stringify(new Date().toISOString())}`,
+    `updatedAt: ${JSON.stringify(updatedAt)}`,
     "---",
     ""
   ].join("\n");
+}
+
+function generatedAt(memory: ExtractedProjectMemory, fallbackMs = 0): string {
+  const timestamps = memory.traces
+    .map((trace) => Date.parse(trace.timestamp))
+    .filter((value) => Number.isFinite(value));
+  const latest = timestamps.length ? Math.max(...timestamps) : fallbackMs;
+  return new Date(latest || 0).toISOString();
 }
 
 function renderStringItems(items: string[], fallbackTraces: Trace[]): string {

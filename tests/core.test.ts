@@ -476,6 +476,29 @@ describe("core MVP behavior", () => {
     expect(await storage.read(project.stateFile)).toBe("# User maintained state\n");
   });
 
+  it("keeps generated merge content stable for the same transcript evidence", async () => {
+    const memory = minimalMemory([
+      {
+        id: "trace-1",
+        sessionId: "s1",
+        provider: "codex",
+        sourcePath: "/tmp/session.jsonl",
+        timestamp: "2026-05-12T00:00:00.000Z"
+      }
+    ]);
+    const first = planManualMerge(project, memory);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = planManualMerge(project, memory);
+    const storage = new MemoryStorage();
+
+    await applyManualMerge(storage, first, { confirmed: true });
+    const reapplied = await applyManualMerge(storage, second, { confirmed: true });
+
+    expect(second.targetFiles).toEqual(first.targetFiles);
+    expect(reapplied.conflicts).toHaveLength(0);
+    expect(reapplied.writtenFiles).toHaveLength(7);
+  });
+
   it("preserves manual canvas edges connected to generated nodes", () => {
     const memory = minimalMemory([
       {
