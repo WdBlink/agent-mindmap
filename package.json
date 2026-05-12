@@ -1,6 +1,6 @@
 {
   "name": "agent-mindmap",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Obsidian plugin MVP for extracting AI coding session memory into Markdown and project-scoped Canvas maps.",
   "main": "main.js",
   "scripts": {
