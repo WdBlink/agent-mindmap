@@ -1,10 +1,11 @@
-import { App, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, requestUrl, Setting, WorkspaceLeaf } from "obsidian";
 import { serializeCanvas, generateProjectCanvas, mergeGeneratedCanvas, parseCanvas } from "./core/canvas";
 import { extractProjectMemoryHeuristic } from "./core/extractor";
 import { applyManualMerge, planManualMerge } from "./core/merge";
 import { mapSessionToProject } from "./core/project-mapping";
 import { SessionService } from "./core/session-service";
 import { ObsidianVaultStorage, SessionCache } from "./core/storage";
+import { obsidianReleaseFetcher, obsidianTextAssetFetcher, PluginUpdater } from "./core/updater";
 import { DEFAULT_SETTINGS, normalizeSettings, type AgentMindmapSettings } from "./settings";
 import { AgentMindmapView, VIEW_TYPE_AGENT_MINDMAP } from "./ui/session-view";
 import { diagnosticSummary } from "./ui/view-model";
@@ -15,6 +16,8 @@ export default class AgentMindmapPlugin extends Plugin {
   private lastSessions: Session[] = [];
   private transcriptMessages: Record<string, Message[]> = {};
   lastDiagnostics: OperationDiagnostic[] = [];
+  updateStatus = "Not checked in this session.";
+  updateInProgress = false;
   private loading = false;
   private mergeWorkflow: MergeWorkflowState = {
     status: "none",
@@ -79,6 +82,10 @@ export default class AgentMindmapPlugin extends Plugin {
     return new SessionService(this.settings, cache);
   }
 
+  private pluginDir(): string {
+    return this.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.manifest.id}`;
+  }
+
   getViewState(): {
     sessions: Session[];
     transcriptMessages: Record<string, Message[]>;
@@ -116,6 +123,34 @@ export default class AgentMindmapPlugin extends Plugin {
       new Notice(`Agent Mindmap: scan failed. ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.loading = false;
+    }
+  }
+
+  async updateFromGitHubRelease(onStatusChange?: () => void): Promise<void> {
+    if (this.updateInProgress) {
+      return;
+    }
+    this.updateInProgress = true;
+    this.updateStatus = "Checking GitHub latest release...";
+    onStatusChange?.();
+
+    try {
+      const updater = new PluginUpdater({
+        storage: new ObsidianVaultStorage(this.app.vault.adapter),
+        pluginDir: this.pluginDir(),
+        currentManifest: this.manifest,
+        fetchLatestRelease: obsidianReleaseFetcher(requestUrl),
+        fetchAssetText: obsidianTextAssetFetcher(requestUrl)
+      });
+      const result = await updater.updateFromLatestRelease();
+      this.updateStatus = `${result.message} Release: ${result.latestVersion}.`;
+      new Notice(result.message);
+    } catch (error) {
+      this.updateStatus = `Update failed: ${error instanceof Error ? error.message : String(error)}`;
+      new Notice(`Agent Mindmap: ${this.updateStatus}`);
+    } finally {
+      this.updateInProgress = false;
+      onStatusChange?.();
     }
   }
 
@@ -359,6 +394,21 @@ class AgentMindmapSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+
+    containerEl.createEl("h3", { text: "Updates" });
+    new Setting(containerEl)
+      .setName("Update from GitHub Release")
+      .setDesc("Manually download the latest stable WdBlink/agent-mindmap release into this vault's plugin folder. Restart Obsidian or reload plugins after a successful update.")
+      .addButton((button) =>
+        button
+          .setButtonText(this.plugin.updateInProgress ? "Updating..." : "Update from GitHub Release")
+          .setDisabled(this.plugin.updateInProgress)
+          .onClick(() => void this.plugin.updateFromGitHubRelease(() => this.display()))
+      );
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: this.plugin.updateStatus
+    });
 
     containerEl.createEl("h3", { text: "Cache Diagnostics" });
     containerEl.createEl("p", {

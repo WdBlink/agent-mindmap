@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-05-13
+
+- Add a settings-page update button that installs the latest stable GitHub release into the active vault plugin folder.
+- Validate release assets before writing files, including plugin id and version checks against the downloaded manifest.
+- Back up existing plugin release files before replacing `main.js`, `manifest.json`, and `styles.css`.
+
 ## 0.1.1 - 2026-05-12
 
 - Fix Codex event parsing so `event_msg` user prompts count as user rounds.

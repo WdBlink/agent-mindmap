@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS } from "../src/settings";
 import { DEFAULT_FILTERS, diagnosticSummary, filterSessions, recoveryLabels } from "../src/ui/view-model";
 import type { ExtractedProjectMemory, Message, Project, Session, Trace } from "../src/types";
 import { SessionCache, type StoragePort } from "../src/core/storage";
+import { compareSemver, PluginUpdater, type GitHubReleaseResponse } from "../src/core/updater";
 
 class MemoryStorage implements StoragePort {
   files = new Map<string, string>();
@@ -846,6 +847,100 @@ describe("core MVP behavior", () => {
     expect(await readFile(file, "utf8")).toBe("{not-json");
     await rm(root, { recursive: true, force: true });
   });
+
+  it("updates plugin files from a newer GitHub release with backups", async () => {
+    const storage = new MemoryStorage();
+    storage.files.set(".obsidian/plugins/agent-mindmap/main.js", "old-main");
+    storage.files.set(".obsidian/plugins/agent-mindmap/manifest.json", JSON.stringify(pluginManifest("0.1.1")));
+    storage.files.set(".obsidian/plugins/agent-mindmap/styles.css", "old-styles");
+    const updater = new PluginUpdater({
+      storage,
+      pluginDir: ".obsidian/plugins/agent-mindmap",
+      currentManifest: pluginManifest("0.1.1"),
+      now: () => new Date("2026-05-13T10:00:00.000Z"),
+      fetchLatestRelease: async () => release("v0.1.2"),
+      fetchAssetText: async (url) => {
+        const name = url.split("/").at(-1);
+        if (name === "manifest.json") {
+          return JSON.stringify(pluginManifest("0.1.2"));
+        }
+        return `new-${name}`;
+      }
+    });
+
+    const result = await updater.updateFromLatestRelease();
+
+    expect(result.status).toBe("updated");
+    expect(result.latestVersion).toBe("0.1.2");
+    expect(result.backupDir).toBe(".obsidian/plugins/agent-mindmap/.backups/2026-05-13T10-00-00-000Z");
+    expect(storage.files.get(".obsidian/plugins/agent-mindmap/main.js")).toBe("new-main.js");
+    expect(storage.files.get(".obsidian/plugins/agent-mindmap/styles.css")).toBe("new-styles.css");
+    expect(storage.files.get(".obsidian/plugins/agent-mindmap/.backups/2026-05-13T10-00-00-000Z/main.js")).toBe("old-main");
+    expect(result.message).toContain("Restart Obsidian");
+  });
+
+  it("does not download assets when the GitHub release is not newer", async () => {
+    let downloads = 0;
+    const updater = new PluginUpdater({
+      storage: new MemoryStorage(),
+      pluginDir: ".obsidian/plugins/agent-mindmap",
+      currentManifest: pluginManifest("0.1.2"),
+      fetchLatestRelease: async () => release("v0.1.2"),
+      fetchAssetText: async () => {
+        downloads += 1;
+        return "";
+      }
+    });
+
+    const result = await updater.updateFromLatestRelease();
+
+    expect(result.status).toBe("already-current");
+    expect(downloads).toBe(0);
+  });
+
+  it("rejects a downloaded release manifest for a different plugin id", async () => {
+    const updater = new PluginUpdater({
+      storage: new MemoryStorage(),
+      pluginDir: ".obsidian/plugins/agent-mindmap",
+      currentManifest: pluginManifest("0.1.1"),
+      fetchLatestRelease: async () => release("v0.1.2"),
+      fetchAssetText: async (url) => {
+        const name = url.split("/").at(-1);
+        if (name === "manifest.json") {
+          return JSON.stringify({ ...pluginManifest("0.1.2"), id: "other-plugin" });
+        }
+        return `new-${name}`;
+      }
+    });
+
+    await expect(updater.updateFromLatestRelease()).rejects.toThrow(/does not match/);
+  });
+
+  it("rejects unsafe plugin directories and missing release assets", async () => {
+    await expect(
+      new PluginUpdater({
+        storage: new MemoryStorage(),
+        pluginDir: "../agent-mindmap",
+        currentManifest: pluginManifest("0.1.1"),
+        fetchLatestRelease: async () => release("v0.1.2")
+      }).updateFromLatestRelease()
+    ).rejects.toThrow(/safe vault-relative/);
+
+    await expect(
+      new PluginUpdater({
+        storage: new MemoryStorage(),
+        pluginDir: ".obsidian/plugins/agent-mindmap",
+        currentManifest: pluginManifest("0.1.1"),
+        fetchLatestRelease: async () => ({ ...release("v0.1.2"), assets: [] })
+      }).updateFromLatestRelease()
+    ).rejects.toThrow(/missing required asset/);
+  });
+
+  it("compares semantic versions with v-prefix support", () => {
+    expect(compareSemver("v0.1.2", "0.1.1")).toBe(1);
+    expect(compareSemver("0.1.2", "v0.1.2")).toBe(0);
+    expect(compareSemver("0.1.1", "0.1.2")).toBe(-1);
+  });
 });
 
 function minimalMemory(traces: Trace[]): ExtractedProjectMemory {
@@ -861,5 +956,29 @@ function minimalMemory(traces: Trace[]): ExtractedProjectMemory {
     artifacts: [],
     timelineEvents: [],
     traces
+  };
+}
+
+function pluginManifest(version: string) {
+  return {
+    id: "agent-mindmap",
+    name: "Agent Mindmap",
+    version,
+    minAppVersion: "1.5.0",
+    description: "Test manifest",
+    author: "Test"
+  };
+}
+
+function release(tag: string): GitHubReleaseResponse {
+  return {
+    tag_name: tag,
+    html_url: `https://github.com/WdBlink/agent-mindmap/releases/tag/${tag}`,
+    draft: false,
+    prerelease: false,
+    assets: ["main.js", "manifest.json", "styles.css"].map((name) => ({
+      name,
+      browser_download_url: `https://example.invalid/${name}`
+    }))
   };
 }
